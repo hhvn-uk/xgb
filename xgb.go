@@ -1,6 +1,9 @@
 package xgb
 
 import (
+	"fmt"
+	"runtime"
+
 	"errors"
 	"io"
 	"log"
@@ -319,6 +322,11 @@ type request struct {
 	seq chan struct{}
 }
 
+func debug(l int, f, s string) {
+	pc, _, _, _ := runtime.Caller(l)
+	Logger.Printf("From %s(), in %s(): %s", runtime.FuncForPC(pc).Name(), f, s)
+}
+
 // NewRequest takes the bytes and a cookie of a particular request, constructs
 // a request type, and sends it over the Conn.reqChan channel.
 // Note that the sequence number is added to the cookie after it is sent
@@ -339,17 +347,22 @@ type request struct {
 // edits the generated code for the request you want to issue.
 func (c *Conn) NewRequest(buf []byte, cookie *Cookie) {
 	seq := make(chan struct{})
+	debug(2, "NewRequest", "1/3 sending")
 	select {
 	case c.reqChan <- &request{buf: buf, cookie: cookie, seq: seq}:
+		debug(2, "NewRequest", "2/3 request in buffer")
 		// request is in buffer
 		// wait until request is processed or connection is closed
 		select {
 		case <-seq:
+			debug(2, "NewRequest", "3/3 request sent")
 			// request was successfully sent to X server
 		case <-c.doneSend:
+			debug(2, "NewRequest", "3/3 request failed to send")
 			// c.sendRequests is down, your request was not handled
 		}
 	case <-c.doneSend:
+		debug(2, "NewRequest", "3/3 request failed to send")
 		// c.sendRequests is down, nobody is listening to your requests
 	}
 }
@@ -365,6 +378,7 @@ func (c *Conn) sendRequests() {
 	for {
 		select {
 		case req := <-c.reqChan:
+			debug(3, "sendRequests", "1/(>1) got a request")
 			if req == nil {
 				// a request by c.Close() to gracefully exit
 				// Flush the response reading goroutine.
@@ -372,6 +386,7 @@ func (c *Conn) sendRequests() {
 					c.conn.Close()
 					<-c.doneRead
 				}
+				debug(3, "sendRequests", "2/2 okay, we're done")
 				return
 			}
 			// ho there! if the cookie channel is nearly full, force a round
@@ -379,20 +394,27 @@ func (c *Conn) sendRequests() {
 			// Note that we circumvent the request channel, because we're *in*
 			// the request channel.
 			if len(c.cookieChan) == cookieBuffer-1 {
+				debug(3, "sendRequests", "2/6 cookie buffer is nearly full")
 				if err := c.noop(); err != nil {
 					// Shut everything down.
+					debug(3, "sendRequests", fmt.Sprintf("c.noop: %s", err))
 					c.conn.Close()
 					<-c.doneRead
 					return
 				}
 			}
+			debug(3, "sendRequests", "3/6 getting a seq id")
 			req.cookie.Sequence = c.newSequenceId()
+			debug(3, "sendRequests", "4/6 sending a cookie to the channel")
 			c.cookieChan <- req.cookie
+			debug(3, "sendRequests", "5/6 writing buffer")
 			if err := c.writeBuffer(req.buf); err != nil {
+				debug(3, "sendRequests", fmt.Sprintf("c.writeBuffer: %s", err))
 				c.conn.Close()
 				<-c.doneRead
 				return
 			}
+			debug(3, "sendRequests", "6/6 closing sequence channel")
 			close(req.seq)
 		case <-c.doneRead:
 			return
@@ -404,12 +426,17 @@ func (c *Conn) sendRequests() {
 // trip request manually.
 func (c *Conn) noop() error {
 	cookie := c.NewCookie(true, true)
+	debug(4, "noop", "1/4 getting a new seq id")
 	cookie.Sequence = c.newSequenceId()
+	debug(4, "noop", "2/4 sending cookie to chan")
 	c.cookieChan <- cookie
 	if err := c.writeBuffer(c.getInputFocusRequest()); err != nil {
+		debug(4, "noop", fmt.Sprintf("err c.writeBuffer: %s", err))
 		return err
 	}
+	debug(4, "noop", "3/4 waiting for buffer to clear")
 	cookie.Reply() // wait for the buffer to clear
+	debug(4, "noop", "4/4 buffer cleared for buffer to clear")
 	return nil
 }
 
