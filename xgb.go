@@ -599,10 +599,18 @@ func (c *Conn) WaitForEvent() (Event, Error) {
 // Event and Error could be nil. Indeed, they are both nil when the event queue
 // is empty.
 func (c *Conn) PollForEvent() (Event, Error) {
+	ev, err, _ := c.PollForEventOrClose()
+	return ev, err
+}
+
+// PollForEventOrClose is equivalent to [PollForEvent], however it returns a
+// boolean, that when set to true, means the connection has been closed.
+func (c *Conn) PollForEventOrClose() (Event, Error, bool) {
 	select {
 	case everr := <-c.eventChan:
-		return processEventOrError(everr)
+		ev, err := processEventOrError(everr)
+		return ev, err, false
 	default:
-		return nil, nil
+		return nil, nil, true
 	}
 }
