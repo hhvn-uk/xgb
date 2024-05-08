@@ -425,15 +425,15 @@ func (c *Conn) writeBuffer(buf []byte) error {
 // writeEvent checks whether the eventChan buffer is full before writing to it.
 // If the buffer is full, this function returns false, and logs a message.
 func (c *Conn) writeEvent(e eventOrError) bool {
-	if len(c.eventChan) == cap(c.eventChan) {
+	select {
+	case c.eventChan <- e:
+		return true
+	default:
 		Logger.Printf("%s\n%s",
 			"The event channel for the connection is full.",
 			"Are you calling X.WaitForEvent or X.PollForEvent frequently enough?")
 		return false
 	}
-
-	c.eventChan <- e
-	return true
 }
 
 // readResponses is a goroutine that reads events, errors and
